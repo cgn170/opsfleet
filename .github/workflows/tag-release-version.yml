@@ -1,0 +1,264 @@
+name: tag-release-version
+on:
+  push:
+    branches:
+      - main
+jobs:
+  create-tag-version:
+    name: Create Tag Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      branchName: ${{ steps.gitversion.outputs.branchName }}
+    steps:
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v3.2.1
+        with:
+          versionSpec: "5.x"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Determine Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v3.2.1
+        with:
+          useConfigFile: true
+          configFilePath: ./.github/GitVersion.yml
+      - name: Display GitVersion outputs
+        run: |
+          echo "SemVer: ${{ steps.gitversion.outputs.semVer }}"
+      - name: Get previous tag
+        id: previousTag
+        run: |
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "No previous tag found, using initial commit"
+            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+          echo "previousTag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "Previous tag: $PREVIOUS_TAG"
+      - name: Generate Changelog (disabled - using commit-based)
+        id: changelog
+        if: false
+        uses: mikepenz/release-changelog-builder-action@v4
+        with:
+          configuration: |
+            {
+              "categories": [
+                {
+                  "title": "## 🚀 Features",
+                  "labels": ["feature", "enhancement", "feat"],
+                  "rules": [
+                    {
+                      "pattern": "^(feat|feature)(\\(.+\\))?: (.+)",
+                      "on_property": "title"
+                    }
+                  ]
+                },
+                {
+                  "title": "## 🐛 Bug Fixes", 
+                  "labels": ["bug", "fix", "bugfix"],
+                  "rules": [
+                    {
+                      "pattern": "^(fix|bugfix)(\\(.+\\))?: (.+)",
+                      "on_property": "title"
+                    }
+                  ]
+                },
+                {
+                  "title": "## 📚 Documentation",
+                  "labels": ["documentation", "docs"],
+                  "rules": [
+                    {
+                      "pattern": "^(docs?|documentation)(\\(.+\\))?: (.+)",
+                      "on_property": "title"
+                    }
+                  ]
+                },
+                {
+                  "title": "## 🔧 Maintenance",
+                  "labels": ["maintenance", "chore", "refactor"],
+                  "rules": [
+                    {
+                      "pattern": "^(chore|refactor|style|test|ci|perf|build)(\\(.+\\))?: (.+)",
+                      "on_property": "title"
+                    }
+                  ]
+                },
+                {
+                  "title": "## 💥 Breaking Changes",
+                  "labels": ["breaking-change", "breaking"]
+                }
+              ],
+              "ignore_labels": ["ignore-for-release"],
+              "ignore_by_title": [
+                "^Merge.*",
+                "^chore:.*CHANGELOG.*",
+                "^chore:.*changelog.*",
+                ".*\\[skip-changelog\\].*"
+              ],
+              "sort": "ASC",
+              "template": "#{{CHANGELOG}}",
+              "pr_template": "- #{{TITLE}}",
+              "empty_template": "- No changes in this release",
+              "base_branches": ["main"],
+              "transformers": [
+                {
+                  "pattern": "^(feat|feature)(\\(.+\\))?: (.+)",
+                  "target": "$3"
+                },
+                {
+                  "pattern": "^(fix|bugfix)(\\(.+\\))?: (.+)",
+                  "target": "$3"
+                },
+                {
+                  "pattern": "^(docs?|documentation)(\\(.+\\))?: (.+)",
+                  "target": "$3"
+                },
+                {
+                  "pattern": "^(chore|refactor|style|test|ci|perf|build)(\\(.+\\))?: (.+)",
+                  "target": "$3"
+                }
+              ]
+            }
+          includeOpen: false
+          fetchViaCommits: false
+          fetchReviewers: false
+          fetchReleaseInformation: true
+          fetchReviews: false
+          commitMode: false
+          fromTag: ${{ steps.previousTag.outputs.previousTag }}
+          toTag: ${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate commit-based changelog
+        id: fallback_changelog
+        run: |
+          echo "Generating fallback changelog from commits..."
+          PREVIOUS_TAG="${{ steps.previousTag.outputs.previousTag }}"
+
+          if [ -n "$PREVIOUS_TAG" ] && git rev-parse "$PREVIOUS_TAG" >/dev/null 2>&1; then
+            COMMIT_RANGE="$PREVIOUS_TAG..HEAD"
+          else
+            # If no previous tag, get commits from initial commit
+            COMMIT_RANGE=$(git rev-list --max-parents=0 HEAD)..HEAD
+          fi
+
+          echo "Analyzing commits in range: $COMMIT_RANGE"
+
+          # Get commits and categorize them - only features and bug fixes
+          FEATURES=""
+          FIXES=""
+
+          while IFS= read -r commit; do
+            if [ -n "$commit" ]; then
+              msg=$(git log --format=%s -n 1 $commit)
+              echo "Processing commit: $msg"
+              
+              # Skip merge commits and chore commits that update changelog
+              if [[ $msg =~ ^Merge.* ]] || [[ $msg =~ ^chore:.*CHANGELOG ]] || [[ $msg =~ ^chore:.*changelog ]] || [[ $msg =~ \[skip-changelog\] ]] || [[ $msg =~ "Merge pull request" ]]; then
+                echo "Skipping: $msg"
+                continue
+              fi
+              
+              if [[ $msg =~ ^feat(\(.+\))?: ]]; then
+                FEATURES="$FEATURES\n- ${msg#feat*: }"
+              elif [[ $msg =~ ^feature(\(.+\))?: ]]; then
+                FEATURES="$FEATURES\n- ${msg#feature*: }"
+              elif [[ $msg =~ ^fix(\(.+\))?: ]]; then
+                FIXES="$FIXES\n- ${msg#fix*: }"
+              elif [[ $msg =~ ^bugfix(\(.+\))?: ]]; then
+                FIXES="$FIXES\n- ${msg#bugfix*: }"
+              fi
+            fi
+          done <<< "$(git rev-list $COMMIT_RANGE)"
+
+          # Build changelog - only include features and bug fixes
+          CHANGELOG=""
+          if [ -n "$FEATURES" ]; then
+            CHANGELOG="$CHANGELOG## 🚀 Features\n$FEATURES\n\n"
+          fi
+          if [ -n "$FIXES" ]; then
+            CHANGELOG="$CHANGELOG## 🐛 Bug Fixes\n$FIXES\n\n"
+          fi
+
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="- No notable changes in this release"
+          fi
+
+          echo "Generated changelog:"
+          echo -e "$CHANGELOG"
+
+          # Save to output (escape newlines for GitHub Actions)
+          {
+            echo "changelog<<EOF"
+            echo -e "$CHANGELOG"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+      - name: Update CHANGELOG.md
+        run: |
+          # Create or update CHANGELOG.md
+          if [ ! -f CHANGELOG.md ]; then
+            echo "# Changelog" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "All notable changes to this project will be documented in this file." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+
+          # Use fallback changelog with proper cleaning
+          CHANGELOG_CONTENT="${{ steps.fallback_changelog.outputs.changelog }}"
+          echo "Using commit-based changelog"
+
+          # Clean changelog content inline
+          CLEANED_CHANGELOG=$(echo "$CHANGELOG_CONTENT" | grep -v "^- Merge pull request" | grep -v "^- chore: update CHANGELOG" | grep -v "PR: #0" | grep -v "^\s*- PR: #0" || echo "$CHANGELOG_CONTENT")
+
+          # If changelog is empty after cleaning, add a default message
+          if [ -z "$CLEANED_CHANGELOG" ] || [ "$CLEANED_CHANGELOG" = "" ]; then
+            CLEANED_CHANGELOG="- No notable changes in this release"
+          fi
+
+          echo "Cleaned changelog:"
+          echo "$CLEANED_CHANGELOG"
+
+          # Prepare the new entry
+          echo "## [v${{ steps.gitversion.outputs.semVer }}] - $(date +%Y-%m-%d)" > temp_changelog.md
+          echo "" >> temp_changelog.md
+          echo -e "$CLEANED_CHANGELOG" >> temp_changelog.md
+          echo "" >> temp_changelog.md
+
+          # Insert new entry after the header
+          sed -i '3r temp_changelog.md' CHANGELOG.md
+          rm temp_changelog.md
+
+          # Commit the updated changelog
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update CHANGELOG.md for v${{ steps.gitversion.outputs.semVer }} [skip-changelog]"
+            git push
+          fi
+      - name: Create tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: "refs/tags/v${{ steps.gitversion.outputs.semVer }}",
+              sha: context.sha
+            })
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.gitversion.outputs.semVer }}
+          name: v${{ steps.gitversion.outputs.semVer }}
+          body: ${{ steps.fallback_changelog.outputs.changelog }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
