@@ -1,0 +1,15 @@
+mode: Mainline
+tag-prefix: "[vV]"
+commit-message-incrementing: MergeMessageOnly
+branches:
+  bugfix:
+    regex: ^(bugfix|fix|hotfix|patch)[/-]
+    source-branches: ["main"]
+    increment: Patch
+  feature:
+    increment: Minor
+    regex: ^(feature|feat)[/-]
+  main:
+    is-mainline: true
+    increment: Patch
+    regex: ^main$
