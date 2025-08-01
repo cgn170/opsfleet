@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inflate-arm
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: inflate-arm
+  template:
+    metadata:
+      labels:
+        app: inflate-arm
+    spec:
+      nodeSelector:
+        arch: arm64
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: inflate-arm
+          image: public.ecr.aws/eks-distro/kubernetes/pause:3.7
+          resources:
+            requests:
+              cpu: 1
+      tolerations:
+        - key: "arch"
+          value: "arm64"
+          effect: "NoSchedule"

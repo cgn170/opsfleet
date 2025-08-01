@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inflate-amd
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: inflate-amd
+  template:
+    metadata:
+      labels:
+        app: inflate-amd
+    spec:
+      nodeSelector:
+        arch: amd64
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: inflate-amd
+          image: public.ecr.aws/eks-distro/kubernetes/pause:3.7
+          resources:
+            requests:
+              cpu: 1
+      tolerations:
+        - key: "arch"
+          value: "amd64"
+          effect: "NoSchedule"
