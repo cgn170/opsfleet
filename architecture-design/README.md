@@ -48,7 +48,13 @@ VPC is the networking layer of AWS where all resources are deployed. We implemen
 
 We defined a VPC with internal subnets where we deploy the backend application (EKS), also we defined deny all inbound traffic by default policy.
 
-We recommend to use internet gateways to allow outbound traffic to the internet and NAT gateways to allow outbound traffic from the internal subnets to the internet.
+VPC Components:
+1.- EKS Subnets: 2 public subnets and 2 private subnets
+2.- DB Subnets: 2 private subnet
+3.- Internet Gateway: For public subnets to allow internet access
+4.- NAT Gateway: For private subnets to allow outbound internet access
+5.- NACLs: Network access control for EKS and DB subnets
+6.- Security Groups: For EKS and DB instances to control inbound and outbound traffic
 
 ## Application Layer
 
@@ -92,4 +98,4 @@ We implemented a bastion host to allow access to third party vendors to internal
 
 ### Production Environment
 
-![Production Environment](./resources/non_production.png)
+![Production Environment](./resources/production.png)
